@@ -42,6 +42,30 @@ export async function setAuto(data: { enabled: boolean; betweenMs: number; choic
   return res.json().catch(() => ({}));
 }
 
+// Question DB types and APIs
+export type Question = { id: string; text: string; options: [string,string,string,string]; correct: number | null; createdAt: number; updatedAt: number };
+
+export async function listQuestions(): Promise<{ questions: Question[] }> {
+  const res = await fetch('/questions');
+  return res.json();
+}
+export async function createQuestion(q: { text: string; options: [string,string,string,string]; correct: number | null }) {
+  const res = await fetch('/questions', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(q) });
+  return res.json();
+}
+export async function updateQuestion(id: string, q: Partial<{ text: string; options: [string,string,string,string]; correct: number | null }>) {
+  const res = await fetch(`/questions/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(q) });
+  return res.json();
+}
+export async function deleteQuestion(id: string) {
+  const res = await fetch(`/questions/${id}`, { method:'DELETE' });
+  return res.json();
+}
+export async function useQuestion(id: string) {
+  const res = await fetch(`/questions/${id}/use`, { method:'POST' });
+  return res.json();
+}
+
 export async function answer(name: string, choice: number) {
   const res = await fetch('/quiz/answer', {
     method: 'POST',

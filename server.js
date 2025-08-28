@@ -13,6 +13,42 @@ const STATIC_DIR = (function(){
   try { if (fs.existsSync(dist)) return dist; } catch {}
   return path.join(__dirname, 'public');
 })();
+const DATA_DIR = path.join(__dirname, 'data');
+const QUESTIONS_FILE = path.join(DATA_DIR, 'questions.json');
+
+function ensureDataStore() {
+  try { if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR); } catch {}
+  if (!fs.existsSync(QUESTIONS_FILE)) {
+    try {
+      fs.writeFileSync(QUESTIONS_FILE, JSON.stringify({ questions: [] }, null, 2));
+    } catch {}
+  }
+}
+
+function loadQuestions() {
+  try {
+    const raw = fs.readFileSync(QUESTIONS_FILE, 'utf-8');
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.questions)) return [];
+    return data.questions;
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveQuestions(questions) {
+  try {
+    fs.writeFileSync(QUESTIONS_FILE, JSON.stringify({ questions }, null, 2));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function newId() {
+  const rnd = Math.random().toString(16).slice(2);
+  return Date.now().toString(36) + '-' + rnd;
+}
 
 // Track connected SSE clients
 const clients = new Set();
@@ -353,6 +389,86 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ ok: false, reason: 'invalid_json' }));
     });
+    return;
+  }
+
+  // Questions DB endpoints
+  if (url.pathname === '/questions' && method === 'GET') {
+    ensureDataStore();
+    const list = loadQuestions();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    return res.end(JSON.stringify({ questions: list }));
+  }
+  if (url.pathname === '/questions' && method === 'POST') {
+    try {
+      ensureDataStore();
+      const data = await readJson(req);
+      const text = String(data.text || '').trim().slice(0, 2000);
+      const options = Array.isArray(data.options) ? data.options.map((s) => String(s || '').trim().slice(0, 200)) : [];
+      const correct = [0,1,2,3].includes(data.correct) ? data.correct : null;
+      if (!text || options.length !== 4 || options.some((s)=>!s)) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        return res.end(JSON.stringify({ ok: false, error: 'invalid' }));
+      }
+      const now = Date.now();
+      const q = { id: newId(), text, options, correct, createdAt: now, updatedAt: now };
+      const list = loadQuestions();
+      list.push(q);
+      saveQuestions(list);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ ok: true, question: q }));
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ ok: false }));
+    }
+  }
+  if (url.pathname.startsWith('/questions/') && method === 'PUT') {
+    try {
+      ensureDataStore();
+      const id = url.pathname.split('/')[2];
+      const data = await readJson(req);
+      const list = loadQuestions();
+      const idx = list.findIndex((x) => x.id === id);
+      if (idx === -1) {
+        res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        return res.end(JSON.stringify({ ok: false, error: 'not_found' }));
+      }
+      if (data.text != null) list[idx].text = String(data.text).trim().slice(0, 2000);
+      if (Array.isArray(data.options)) list[idx].options = data.options.map((s)=>String(s||'').trim().slice(0,200)).slice(0,4);
+      if ([0,1,2,3].includes(data.correct)) list[idx].correct = data.correct;
+      list[idx].updatedAt = Date.now();
+      saveQuestions(list);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ ok: true, question: list[idx] }));
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ ok: false }));
+    }
+  }
+  if (url.pathname.startsWith('/questions/') && method === 'DELETE') {
+    ensureDataStore();
+    const id = url.pathname.split('/')[2];
+    const list = loadQuestions();
+    const next = list.filter((x) => x.id !== id);
+    saveQuestions(next);
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    return res.end(JSON.stringify({ ok: true }));
+  }
+  if (url.pathname.startsWith('/questions/') && method === 'POST' && url.pathname.endsWith('/use')) {
+    ensureDataStore();
+    const id = url.pathname.split('/')[2];
+    const list = loadQuestions();
+    const found = list.find((x) => x.id === id);
+    if (!found) {
+      res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ ok: false, error: 'not_found' }));
+    }
+    quiz.mode = 'choice';
+    quiz.question = { text: found.text, options: found.options, correct: found.correct };
+    quiz.answers = new Map();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({ ok: true }));
+    broadcastQuizState();
     return;
   }
 

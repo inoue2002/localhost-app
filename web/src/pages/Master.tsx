@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { QuizState, openQuiz, resetQuiz, subscribe, setConfig, setAuto } from '@/lib/api';
+import { QuizState, openQuiz, resetQuiz, subscribe, setConfig, setAuto, listQuestions, createQuestion, updateQuestion, deleteQuestion, useQuestion, Question } from '@/lib/api';
 
 export default function Master() {
   const [state, setState] = React.useState<QuizState>({ mode:'buzzer', isOpen: false, first: null, order: [], question: null, counts: [0,0,0,0]});
@@ -10,6 +10,8 @@ export default function Master() {
   const [autoEnabled, setAutoEnabled] = React.useState(false);
   const [betweenMs, setBetweenMs] = React.useState(5000);
   const [choiceDurationMs, setChoiceDurationMs] = React.useState(15000);
+  const [questions, setQuestions] = React.useState<Question[]>([]);
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
   React.useEffect(() => subscribe((s)=>{
     setState(s);
@@ -24,6 +26,38 @@ export default function Master() {
       setChoiceDurationMs(s.auto.choiceDurationMs);
     }
   }, () => {}), []);
+
+  React.useEffect(() => {
+    (async () => {
+      try { const data = await listQuestions(); setQuestions(data.questions || []); } catch {}
+    })();
+  }, []);
+
+  async function saveNew() {
+    const res = await createQuestion({ text, options: opts, correct });
+    if (res?.ok && res.question) {
+      setQuestions((prev)=>[res.question, ...prev]);
+      setSelectedId(res.question.id);
+    }
+  }
+  async function saveUpdate() {
+    if (!selectedId) return;
+    const res = await updateQuestion(selectedId, { text, options: opts, correct });
+    if (res?.ok && res.question) {
+      setQuestions((prev)=>prev.map(q=> q.id===selectedId? res.question : q));
+    }
+  }
+  async function removeSelected(id: string) {
+    await deleteQuestion(id);
+    setQuestions((prev)=>prev.filter(q=>q.id!==id));
+    if (selectedId === id) { setSelectedId(null); }
+  }
+  function loadQuestion(q: Question) {
+    setSelectedId(q.id);
+    setText(q.text);
+    setOpts([q.options[0], q.options[1], q.options[2], q.options[3]]);
+    setCorrect(q.correct ?? 0);
+  }
 
   return (
     <div>
@@ -51,8 +85,28 @@ export default function Master() {
               </label>
             ))}
             <div className="row">
-              <button className="btn" onClick={async()=>{ await setConfig({ text, options: opts, correct }); }}>保存/更新</button>
-              <button className="btn secondary" onClick={()=>{ setText(''); setOpts(['','','','']); setCorrect(0); }}>クリア</button>
+              <button className="btn" onClick={saveNew}>問題DBに保存（新規）</button>
+              <button className="btn secondary" onClick={saveUpdate} disabled={!selectedId}>選択中の問題を更新</button>
+              <button className="btn secondary" onClick={()=>{ setSelectedId(null); setText(''); setOpts(['','','','']); setCorrect(0); }}>クリア</button>
+              <button className="btn secondary" onClick={async()=>{ await setConfig({ text, options: opts, correct }); }}>この内容で一時設定</button>
+            </div>
+            <div>
+              <h4 style={{ margin: '8px 0' }}>問題DB</h4>
+              <div className="grid">
+                {questions.map((q)=> (
+                  <div key={q.id} className="item" style={{ display:'grid', gap:8 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', gap:8 }}>
+                      <strong style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{q.text}</strong>
+                      <small className="status">{new Date(q.updatedAt).toLocaleTimeString()}</small>
+                    </div>
+                    <div className="row">
+                      <button className="btn" onClick={()=>loadQuestion(q)}>編集</button>
+                      <button className="btn secondary" onClick={async()=>{ await useQuestion(q.id); }}>この問題を使う</button>
+                      <button className="btn secondary" onClick={()=>removeSelected(q.id)}>削除</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
             <hr style={{ border:'none', borderTop:'1px solid #1b2440' }} />
             <h4 style={{ margin: 0 }}>自動進行</h4>
