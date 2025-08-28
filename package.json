@@ -3,18 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "description": "Offline LAN mini-apps (chat + buzzer) over LAN using SSE.",
-  "main": "server.js",
+  "main": "dist/server.js",
   "license": "UNLICENSED",
   "scripts": {
-    "start": "node server.js",
+    "start": "node dist/server.js",
+    "start:legacy": "node server.js",
+    "dev": "tsx src/server.ts",
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build",
-    "web:preview": "npm --prefix web run preview"
+    "web:preview": "npm --prefix web run preview",
+    "build": "tsc -p ."
   },
   "workspaces": [
     "web"
   ],
   "dependencies": {
+    "@hono/node-server": "^1.12.1",
+    "hono": "^4.5.3",
     "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.4",
+    "tsx": "^4.19.1",
+    "typescript": "^5.5.4"
   }
 }
