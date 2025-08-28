@@ -3,7 +3,9 @@ import path from 'node:path';
 
 export default defineConfig({
   server: {
+    host: true,
     port: 5173,
+    strictPort: true,
     proxy: {
       '/events': 'http://localhost:3000',
       '/quiz': 'http://localhost:3000',
@@ -21,4 +23,3 @@ export default defineConfig({
     }
   }
 });
-
