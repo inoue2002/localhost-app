@@ -3,11 +3,12 @@ import { serve } from '@hono/node-server';
 import { promises as fsp } from 'fs';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import os from 'os';
 
-// Optional QR output
-let qrcode: any = null;
-try { qrcode = require('qrcode-terminal'); } catch {}
+// __dirname polyfill for ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
@@ -183,15 +184,17 @@ app.get('*', async (c) => {
       // SPA fallback
       const base = path.dirname(filePath);
       const indexFile = path.join(base, 'index.html');
-      const data2 = await fsp.readFile(indexFile).catch(() => null);
+      const data2 = await fsp.readFile(indexFile).catch(() => null as any);
       if (!data2) return c.text('Not found', 404);
-      return new Response(data2, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      const ab = (data2 as Buffer).buffer.slice((data2 as Buffer).byteOffset, (data2 as Buffer).byteOffset + (data2 as Buffer).byteLength);
+      return new Response(ab, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
     }
     const fp = st.isDirectory() ? path.join(filePath, 'index.html') : filePath;
     const data = await fsp.readFile(fp);
     const ext = path.extname(fp).toLowerCase();
     const types: Record<string,string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml' };
-    return new Response(data, { headers: { 'Content-Type': types[ext] || 'application/octet-stream' } });
+    const ab = (data as Buffer).buffer.slice((data as Buffer).byteOffset, (data as Buffer).byteOffset + (data as Buffer).byteLength);
+    return new Response(ab, { headers: { 'Content-Type': types[ext] || 'application/octet-stream' } });
   } catch { return c.text('Not found', 404); }
 });
 
@@ -199,10 +202,15 @@ serve({ fetch: app.fetch, port: PORT, hostname: HOST }, () => {
   const ips = getLocalIPs();
   const list = ips.map((ip) => `  http://${ip}:${PORT}`).join('\n');
   console.log(`Hono server listening on:\n${list || '  http://127.0.0.1:' + PORT}`);
-  if (qrcode) {
-    console.log('\nQR codes for mobile access:');
-    const targets = ips.length ? ips.map((ip) => `http://${ip}:${PORT}`) : [`http://127.0.0.1:${PORT}`];
-    for (const url of targets) { console.log(`\nFor ${url}:`); try { qrcode.generate(url, { small: true }); } catch {} }
-  }
+  console.log('\nQR codes for mobile access:');
+  const targets = ips.length ? ips.map((ip) => `http://${ip}:${PORT}`) : [`http://127.0.0.1:${PORT}`];
+  import('qrcode-terminal')
+    .then((mod: any) => {
+      const qr = mod.default ?? mod;
+      for (const url of targets) { console.log(`\nFor ${url}:`); try { qr.generate(url, { small: true }); } catch {} }
+    })
+    .catch(() => {
+      for (const url of targets) { console.log(`- ${url}`); }
+      console.log('(Install qrcode-terminal to print QR codes)');
+    });
 });
-
