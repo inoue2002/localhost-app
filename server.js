@@ -50,6 +50,20 @@ function newId() {
   return Date.now().toString(36) + '-' + rnd;
 }
 
+function getQuestionById(id) {
+  const list = loadQuestions();
+  return list.find((q) => q.id === id) || null;
+}
+
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 // Track connected SSE clients
 const clients = new Set();
 
@@ -472,6 +486,35 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Playlist / next question control
+  if (url.pathname === '/quiz/playlist' && method === 'POST') {
+    try {
+      const data = await readJson(req);
+      let ids = Array.isArray(data.ids) ? data.ids.map(String) : null;
+      const shouldShuffle = !!data.shuffle;
+      const all = loadQuestions();
+      if (!ids) ids = all.map((q) => q.id);
+      if (shouldShuffle) ids = shuffle(ids);
+      quiz._play = { order: ids, idx: -1 };
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ ok: true, count: ids.length }));
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ ok: false }));
+    }
+  }
+  if (url.pathname === '/quiz/next' && method === 'POST') {
+    const ok = ensureNextQuestion();
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    if (ok) {
+      res.end(JSON.stringify({ ok: true, question: quiz.question }));
+      broadcastQuizState();
+    } else {
+      res.end(JSON.stringify({ ok: false, error: 'no_question' }));
+    }
+    return;
+  }
+
   if (url.pathname === '/health' && method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true }));
@@ -553,7 +596,30 @@ function scheduleNextOpen() {
   const wait = Math.max(0, Number(quiz.auto.betweenMs || 0));
   quiz._timers.nextTimer = setTimeout(() => {
     // reopen next round; for choice use configured duration
-    if (quiz.mode === 'choice') openRound(quiz.auto.choiceDurationMs);
-    else openRound();
+    if (quiz.mode === 'choice') {
+      // set next question from playlist or DB; if none, remain last question
+      ensureNextQuestion();
+      openRound(quiz.auto.choiceDurationMs);
+    } else {
+      openRound();
+    }
   }, wait);
+}
+
+function ensureNextQuestion() {
+  // Determine next question id
+  const all = loadQuestions();
+  if (!all.length) return false;
+  if (!quiz._play || !Array.isArray(quiz._play.order) || quiz._play.order.length === 0) {
+    quiz._play = { order: all.map((q) => q.id), idx: -1 };
+  }
+  let nextIdx = (quiz._play.idx || 0) + 1;
+  if (nextIdx >= quiz._play.order.length) nextIdx = 0; // loop
+  const id = quiz._play.order[nextIdx];
+  const found = getQuestionById(id) || all[0];
+  quiz._play.idx = nextIdx;
+  quiz.mode = 'choice';
+  quiz.question = { text: found.text, options: found.options, correct: found.correct };
+  quiz.answers = new Map();
+  return true;
 }
