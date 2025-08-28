@@ -5,10 +5,12 @@ export type QuizState = {
   order: { name: string; ts: number }[];
   question: { text: string; options: string[]; correct: number | null } | null;
   counts: [number, number, number, number];
+  deadlineTs: number | null;
+  auto: { enabled: boolean; betweenMs: number; choiceDurationMs: number };
 };
 
-export function openQuiz() {
-  return fetch('/quiz/open', { method: 'POST' });
+export function openQuiz(opts?: { durationMs?: number }) {
+  return fetch('/quiz/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(opts||{}) });
 }
 export function resetQuiz() {
   return fetch('/quiz/reset', { method: 'POST' });
@@ -24,6 +26,15 @@ export async function buzz(name: string) {
 
 export async function setConfig(data: { text: string; options: [string, string, string, string]; correct: number | null }) {
   const res = await fetch('/quiz/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  return res.json().catch(() => ({}));
+}
+
+export async function setAuto(data: { enabled: boolean; betweenMs: number; choiceDurationMs: number }) {
+  const res = await fetch('/quiz/auto', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)

@@ -26,6 +26,14 @@ const quiz = {
   // choice
   question: null, // { text, options: [4], correct: 0-3|null }
   answers: new Map(), // name -> { choice, ts }
+  // timers / auto
+  deadlineTs: null, // when current round auto-closes (choice mode)
+  auto: {
+    enabled: false,
+    betweenMs: 5000, // wait before next round
+    choiceDurationMs: 15000, // time window to answer
+  },
+  _timers: { closeTimer: null, nextTimer: null },
 };
 
 function getLocalIPs() {
@@ -222,6 +230,7 @@ const server = http.createServer(async (req, res) => {
       quiz.mode = 'choice';
       quiz.question = { text, options, correct };
       quiz.answers = new Map();
+      // if open with previous deadline, keep it; otherwise rely on /quiz/open
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ ok: true }));
       broadcastQuizState();
@@ -232,18 +241,18 @@ const server = http.createServer(async (req, res) => {
     }
   }
   if (url.pathname === '/quiz/open' && method === 'POST') {
-    quiz.isOpen = true;
-    if (quiz.mode === 'buzzer') {
-      quiz.first = null;
-      quiz.order = [];
-      quiz.pressedBy = new Set();
-    } else {
-      quiz.answers = new Map();
+    try {
+      const data = await readJson(req).catch(()=>({}));
+      const durationMs = Number(data.durationMs || 0);
+      openRound(durationMs > 0 ? durationMs : undefined);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    } catch (_) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: true }));
+      return;
     }
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify({ ok: true }));
-    broadcastQuizState();
-    return;
   }
   if (url.pathname === '/quiz/reset' && method === 'POST') {
     quiz.isOpen = false;
@@ -251,10 +260,30 @@ const server = http.createServer(async (req, res) => {
     quiz.order = [];
     quiz.pressedBy = new Set();
     quiz.answers = new Map();
+    quiz.deadlineTs = null;
+    clearTimer('closeTimer');
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({ ok: true }));
     broadcastQuizState();
     return;
+  }
+  if (url.pathname === '/quiz/auto' && method === 'POST') {
+    try {
+      const data = await readJson(req);
+      quiz.auto.enabled = !!data.enabled;
+      if (data.betweenMs != null) quiz.auto.betweenMs = Math.max(0, Number(data.betweenMs));
+      if (data.choiceDurationMs != null) quiz.auto.choiceDurationMs = Math.max(1000, Number(data.choiceDurationMs));
+      // manage timers
+      clearTimer('nextTimer');
+      if (quiz.auto.enabled && !quiz.isOpen) scheduleNextOpen();
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: true }));
+      broadcastQuizState();
+      return;
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ ok: false, error: 'invalid_json' }));
+    }
   }
   if (url.pathname === '/quiz/answer' && method === 'POST') {
     try {
@@ -281,6 +310,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ ok: true }));
       broadcastQuizState();
+      // optional: auto close when all have answered? Can't know participants count; keep timer-based.
       return;
     } catch (e) {
       res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -306,6 +336,11 @@ const server = http.createServer(async (req, res) => {
         if (quiz.mode === 'buzzer') {
           // lock on first only for buzzer mode
           quiz.isOpen = false;
+          clearTimer('closeTimer');
+          quiz.deadlineTs = null;
+          broadcastQuizState();
+          // schedule next open if auto
+          if (quiz.auto.enabled) scheduleNextOpen();
         }
       }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -345,5 +380,54 @@ function publicQuizState() {
     order: quiz.order,
     question: quiz.question,
     counts,
+    deadlineTs: quiz.deadlineTs,
+    auto: { enabled: quiz.auto.enabled, betweenMs: quiz.auto.betweenMs, choiceDurationMs: quiz.auto.choiceDurationMs },
   };
+}
+
+function clearTimer(key) {
+  if (quiz._timers[key]) {
+    clearTimeout(quiz._timers[key]);
+    quiz._timers[key] = null;
+  }
+}
+
+function openRound(durationMs) {
+  quiz.isOpen = true;
+  if (quiz.mode === 'buzzer') {
+    quiz.first = null;
+    quiz.order = [];
+    quiz.pressedBy = new Set();
+    quiz.deadlineTs = null;
+    clearTimer('closeTimer');
+  } else {
+    quiz.answers = new Map();
+    const ms = Number(durationMs || quiz.auto.choiceDurationMs || 0);
+    if (ms > 0) {
+      quiz.deadlineTs = Date.now() + ms;
+      clearTimer('closeTimer');
+      quiz._timers.closeTimer = setTimeout(() => closeRound(), ms);
+    } else {
+      quiz.deadlineTs = null;
+    }
+  }
+  broadcastQuizState();
+}
+
+function closeRound() {
+  quiz.isOpen = false;
+  quiz.deadlineTs = null;
+  clearTimer('closeTimer');
+  broadcastQuizState();
+  if (quiz.auto.enabled) scheduleNextOpen();
+}
+
+function scheduleNextOpen() {
+  clearTimer('nextTimer');
+  const wait = Math.max(0, Number(quiz.auto.betweenMs || 0));
+  quiz._timers.nextTimer = setTimeout(() => {
+    // reopen next round; for choice use configured duration
+    if (quiz.mode === 'choice') openRound(quiz.auto.choiceDurationMs);
+    else openRound();
+  }, wait);
 }

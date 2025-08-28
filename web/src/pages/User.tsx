@@ -61,6 +61,8 @@ export default function User() {
     }
   }
 
+  const remainingSec = state.deadlineTs ? Math.max(0, Math.ceil((state.deadlineTs - Date.now())/1000)) : null;
+
   return (
     <div>
       <header style={{ padding: '12px 16px', borderBottom: '1px solid #1b2440', display:'flex', justifyContent:'space-between' }}>
@@ -92,7 +94,7 @@ export default function User() {
                   </button>
                 ))}
               </div>
-              <div className="status">{msg}</div>
+              <div className="status">{msg}{remainingSec!==null ? ` ／ 残り ${remainingSec} 秒` : ''}</div>
             </>
           )}
         </div>

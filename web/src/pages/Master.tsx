@@ -1,12 +1,15 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { QuizState, openQuiz, resetQuiz, subscribe, setConfig } from '@/lib/api';
+import { QuizState, openQuiz, resetQuiz, subscribe, setConfig, setAuto } from '@/lib/api';
 
 export default function Master() {
   const [state, setState] = React.useState<QuizState>({ mode:'buzzer', isOpen: false, first: null, order: [], question: null, counts: [0,0,0,0]});
   const [text, setText] = React.useState('');
   const [opts, setOpts] = React.useState<[string,string,string,string]>(['','','','']);
   const [correct, setCorrect] = React.useState<number | null>(0);
+  const [autoEnabled, setAutoEnabled] = React.useState(false);
+  const [betweenMs, setBetweenMs] = React.useState(5000);
+  const [choiceDurationMs, setChoiceDurationMs] = React.useState(15000);
 
   React.useEffect(() => subscribe((s)=>{
     setState(s);
@@ -14,6 +17,11 @@ export default function Master() {
       setText(s.question.text);
       setOpts([s.question.options[0]||'', s.question.options[1]||'', s.question.options[2]||'', s.question.options[3]||'']);
       setCorrect(s.question.correct ?? 0);
+    }
+    if (s.auto) {
+      setAutoEnabled(s.auto.enabled);
+      setBetweenMs(s.auto.betweenMs);
+      setChoiceDurationMs(s.auto.choiceDurationMs);
     }
   }, () => {}), []);
 
@@ -46,11 +54,26 @@ export default function Master() {
               <button className="btn" onClick={async()=>{ await setConfig({ text, options: opts, correct }); }}>保存/更新</button>
               <button className="btn secondary" onClick={()=>{ setText(''); setOpts(['','','','']); setCorrect(0); }}>クリア</button>
             </div>
+            <hr style={{ border:'none', borderTop:'1px solid #1b2440' }} />
+            <h4 style={{ margin: 0 }}>自動進行</h4>
+            <label style={{ display:'flex', gap:8, alignItems:'center' }}>
+              <input type="checkbox" checked={autoEnabled} onChange={async (e)=>{ const v=e.target.checked; setAutoEnabled(v); await setAuto({ enabled: v, betweenMs, choiceDurationMs }); }} />
+              有効にする
+            </label>
+            <label className="row">
+              インターバル(ms)
+              <input className="input" type="number" value={betweenMs} onChange={(e)=>setBetweenMs(Math.max(0, Number(e.target.value)||0))} />
+            </label>
+            <label className="row">
+              受付時間（四択, ms）
+              <input className="input" type="number" value={choiceDurationMs} onChange={(e)=>setChoiceDurationMs(Math.max(1000, Number(e.target.value)||0))} />
+            </label>
             <div className="row">
-              <button className="btn" onClick={() => openQuiz()}>受付開始（Open）</button>
-              <button className="btn secondary" onClick={() => resetQuiz()}>リセット（結果クリア）</button>
+              <button className="btn" onClick={async()=>{ await setAuto({ enabled: autoEnabled, betweenMs, choiceDurationMs }); }}>自動設定を保存</button>
+              <button className="btn secondary" onClick={() => openQuiz({ durationMs: state.mode==='choice' ? choiceDurationMs : undefined })}>今すぐ開始</button>
+              <button className="btn secondary" onClick={() => resetQuiz()}>リセット</button>
             </div>
-            <div className="status">現在のモード: {state.mode}</div>
+            <div className="status">現在のモード: {state.mode} {state.deadlineTs ? `／ 残り ${(Math.max(0, state.deadlineTs - Date.now())/1000).toFixed(0)} 秒` : ''}</div>
           </div>
         </section>
         <section style={{ marginTop: 16 }}>
