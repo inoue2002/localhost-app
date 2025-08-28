@@ -2,9 +2,9 @@
 
 A zero-dependency LAN mini‑apps set that works offline on the same Wi‑Fi/LAN. Includes a buzzer quiz and simple chat. Uses Server-Sent Events (SSE) for realtime updates—no external services required.
 
-## Run
+## Run (Production build)
 
-- Start on your Mac:
+- Start server on your Mac:
   - `make start` (or `PORT=3000 node server.js`)
 - On other devices (same Wi‑Fi), open:
   - `http://<MacのIP>:3000` → トップ画面で役割を選択（ゲームマスター / ユーザー）
@@ -12,12 +12,17 @@ A zero-dependency LAN mini‑apps set that works offline on the same Wi‑Fi/LAN
 
 If macOS firewall prompts, allow incoming connections for Node.
 
+## Run (Dev with React)
+
+- Install deps: `npm install`
+- Start API server: `make start`
+- Start web dev server: `npm run web:dev` then open `http://localhost:5173`
+
 ## How it works
 
 - `server.js`: HTTP server + SSE `/events`; endpoints `/chat`, `/quiz/open`, `/quiz/reset`, `/quiz/buzz`。
-- `public/index.html`: トップ画面（役割選択）。
-- `public/master.html`: マスター用。受付Open/Reset、押した順と最初の人を表示。
-- `public/user.html`: ユーザー用。名前入力→「早押し！」。
+- `web/` — React + TypeScript client (Vite). Routes: `/`, `/master`, `/user`。
+- `public/` — fallback static assets (legacy, optional)
 - Binds to `0.0.0.0` so others on the LAN can connect.
 
 ## Project layout

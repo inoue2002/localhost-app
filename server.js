@@ -39,6 +39,7 @@ function handleSSE(req, res) {
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
+    'Access-Control-Allow-Origin': '*',
   });
 
   // Initial comment and hello event
@@ -122,8 +123,17 @@ function serveStatic(req, res) {
   }
   fs.stat(filePath, (err, stats) => {
     if (err) {
-      res.writeHead(404);
-      return res.end('Not found');
+      // SPA fallback (serve index.html) if exists
+      const base = path.dirname(filePath);
+      const indexFile = path.join(base, 'index.html');
+      return fs.readFile(indexFile, (e2, data2) => {
+        if (e2) {
+          res.writeHead(404);
+          return res.end('Not found');
+        }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        return res.end(data2);
+      });
     }
     if (stats.isDirectory()) filePath = path.join(filePath, 'index.html');
     fs.readFile(filePath, (err2, data) => {
@@ -171,15 +181,15 @@ const server = http.createServer(async (req, res) => {
       const name = String((data.name || 'anon')).slice(0, 24);
       const message = String((data.message || '')).slice(0, 500);
       if (!message.trim()) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         return res.end(JSON.stringify({ error: 'empty_message' }));
       }
       const payload = { name, message, ts: Date.now() };
       broadcastChat(payload);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       return res.end(JSON.stringify({ ok: true }));
     } catch (e) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       return res.end(JSON.stringify({ error: 'invalid_json' }));
     }
   }
@@ -190,7 +200,7 @@ const server = http.createServer(async (req, res) => {
     quiz.first = null;
     quiz.order = [];
     quiz.pressedBy = new Set();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({ ok: true }));
     broadcastQuizState();
     return;
@@ -200,7 +210,7 @@ const server = http.createServer(async (req, res) => {
     quiz.first = null;
     quiz.order = [];
     quiz.pressedBy = new Set();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({ ok: true }));
     broadcastQuizState();
     return;
@@ -209,11 +219,11 @@ const server = http.createServer(async (req, res) => {
     readJson(req).then((data) => {
       const name = String((data.name || '')).trim().slice(0, 24) || 'anon';
       if (!quiz.isOpen) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         return res.end(JSON.stringify({ ok: false, reason: 'closed' }));
       }
       if (quiz.pressedBy.has(name)) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         return res.end(JSON.stringify({ ok: false, reason: 'duplicate' }));
       }
       const entry = { name, ts: Date.now() };
@@ -222,12 +232,12 @@ const server = http.createServer(async (req, res) => {
       if (!quiz.first) quiz.first = entry;
       // lock on first
       quiz.isOpen = false;
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ ok: true }));
       broadcastBuzz(entry);
       broadcastQuizState();
     }).catch(() => {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ ok: false, reason: 'invalid_json' }));
     });
     return;
