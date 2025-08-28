@@ -2,7 +2,9 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-// Note: keep zero dependencies for offline environments
+// Optional: QR code output in terminal
+let qrcode = null;
+try { qrcode = require('qrcode-terminal'); } catch (_) { /* optional */ }
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const HOST = '0.0.0.0'; // listen on all interfaces for LAN access
@@ -366,6 +368,14 @@ server.listen(PORT, HOST, () => {
   const ips = getLocalIPs();
   const list = ips.map((ip) => `  http://${ip}:${PORT}`).join('\n');
   console.log(`LAN chat listening on:\n${list || '  http://127.0.0.1:' + PORT}`);
+  if (qrcode) {
+    console.log('\nQR codes for mobile access:');
+    const targets = ips.length ? ips.map((ip) => `http://${ip}:${PORT}`) : [`http://127.0.0.1:${PORT}`];
+    for (const url of targets) {
+      console.log(`\nFor ${url}:`);
+      try { qrcode.generate(url, { small: true }); } catch (_) {}
+    }
+  }
 });
 
 function publicQuizState() {
