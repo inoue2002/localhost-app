@@ -1,0 +1,12 @@
+{
+  "name": "localhost-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline LAN chat over localhost/LAN using SSE.",
+  "main": "server.js",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
+

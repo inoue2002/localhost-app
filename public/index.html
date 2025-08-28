@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LAN Chat (Offline)</title>
+    <style>
+      :root { --bg:#0b1020; --fg:#e7ebf0; --muted:#9aa4b2; --accent:#3aa675; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, sans-serif; }
+      header { padding: 12px 16px; border-bottom: 1px solid #1b2440; display:flex; gap:12px; align-items:center; }
+      header h1 { margin: 0; font-size: 16px; }
+      header small { color: var(--muted); }
+      #chat { display: grid; grid-template-rows: 1fr auto; height: calc(100vh - 54px); }
+      #log { padding: 12px 16px; overflow-y: auto; }
+      #log li { list-style: none; margin: 0 0 8px 0; padding: 8px 10px; background: #121a33; border-radius: 6px; }
+      #log .meta { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+      form { display:flex; gap:8px; padding: 8px; border-top: 1px solid #1b2440; background: #0e1630; }
+      input, button { font: inherit; }
+      input[type=text] { flex: 1; padding: 10px 12px; border-radius: 6px; border: 1px solid #223055; background:#0b1020; color: var(--fg); }
+      input[name=name] { max-width: 160px; }
+      button { padding: 10px 14px; border-radius: 6px; border: 1px solid #2f405f; background: var(--accent); color: #04110b; font-weight: 600; cursor: pointer; }
+      .row { display:flex; gap:8px; align-items:center; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>LAN Chat</h1>
+      <small>同じWi‑Fi内でリアルタイム（オフライン可）</small>
+    </header>
+    <main id="chat">
+      <ul id="log"></ul>
+      <form id="form">
+        <div class="row" style="width:100%">
+          <input type="text" name="name" placeholder="名前（任意）" maxlength="24" />
+          <input type="text" name="message" placeholder="メッセージ" maxlength="500" autocomplete="off" required />
+          <button type="submit">送信</button>
+        </div>
+      </form>
+    </main>
+
+    <script>
+      const log = document.getElementById('log');
+      const form = document.getElementById('form');
+      const nameInput = form.elements.namedItem('name');
+      const msgInput = form.elements.namedItem('message');
+
+      function addMsg({name, message, ts}) {
+        const li = document.createElement('li');
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        const when = new Date(ts || Date.now()).toLocaleTimeString();
+        meta.textContent = `${name || 'anon'} • ${when}`;
+        const body = document.createElement('div');
+        body.textContent = message;
+        li.appendChild(meta); li.appendChild(body);
+        log.appendChild(li);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      // Subscribe to server-sent events
+      const es = new EventSource('/events');
+      es.addEventListener('chat', (ev) => {
+        try { addMsg(JSON.parse(ev.data)); } catch {}
+      });
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const payload = { name: nameInput.value || 'anon', message: msgInput.value };
+        if (!payload.message.trim()) return;
+        try {
+          await fetch('/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          msgInput.value = '';
+          msgInput.focus();
+        } catch (err) {
+          alert('送信に失敗しました。サーバの起動を確認してください。');
+        }
+      });
+    </script>
+  </body>
+  </html>
+
