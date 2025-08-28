@@ -9,6 +9,14 @@ const HOST = '0.0.0.0'; // listen on all interfaces for LAN access
 // Track connected SSE clients
 const clients = new Set();
 
+// Quiz state (in-memory)
+const quiz = {
+  isOpen: false,
+  first: null, // { name, ts }
+  order: [], // [{ name, ts }]
+  pressedBy: new Set(),
+};
+
 function getLocalIPs() {
   const nets = os.networkInterfaces();
   const addrs = [];
@@ -36,6 +44,8 @@ function handleSSE(req, res) {
   // Initial comment and hello event
   res.write(': connected\n\n');
   sendEvent(res, 'hello', { ts: Date.now() });
+  // Push current quiz state on connect
+  sendEvent(res, 'quiz_state', { isOpen: quiz.isOpen, first: quiz.first, order: quiz.order });
 
   // Keep alive pings
   const ping = setInterval(() => {
@@ -62,6 +72,22 @@ function broadcastChat(payload) {
     } catch (_) {
       // ignore broken pipe
     }
+  }
+}
+
+function broadcastQuizState() {
+  for (const { res } of clients) {
+    try {
+      sendEvent(res, 'quiz_state', { isOpen: quiz.isOpen, first: quiz.first, order: quiz.order });
+    } catch (_) {}
+  }
+}
+
+function broadcastBuzz(entry) {
+  for (const { res } of clients) {
+    try {
+      sendEvent(res, 'buzz', entry);
+    } catch (_) {}
   }
 }
 
@@ -158,6 +184,55 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Quiz endpoints
+  if (url.pathname === '/quiz/open' && method === 'POST') {
+    quiz.isOpen = true;
+    quiz.first = null;
+    quiz.order = [];
+    quiz.pressedBy = new Set();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    broadcastQuizState();
+    return;
+  }
+  if (url.pathname === '/quiz/reset' && method === 'POST') {
+    quiz.isOpen = false;
+    quiz.first = null;
+    quiz.order = [];
+    quiz.pressedBy = new Set();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    broadcastQuizState();
+    return;
+  }
+  if (url.pathname === '/quiz/buzz' && method === 'POST') {
+    readJson(req).then((data) => {
+      const name = String((data.name || '')).trim().slice(0, 24) || 'anon';
+      if (!quiz.isOpen) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, reason: 'closed' }));
+      }
+      if (quiz.pressedBy.has(name)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: false, reason: 'duplicate' }));
+      }
+      const entry = { name, ts: Date.now() };
+      quiz.pressedBy.add(name);
+      quiz.order.push(entry);
+      if (!quiz.first) quiz.first = entry;
+      // lock on first
+      quiz.isOpen = false;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+      broadcastBuzz(entry);
+      broadcastQuizState();
+    }).catch(() => {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'invalid_json' }));
+    });
+    return;
+  }
+
   if (url.pathname === '/health' && method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true }));
@@ -171,4 +246,3 @@ server.listen(PORT, HOST, () => {
   const list = ips.map((ip) => `  http://${ip}:${PORT}`).join('\n');
   console.log(`LAN chat listening on:\n${list || '  http://127.0.0.1:' + PORT}`);
 });
-

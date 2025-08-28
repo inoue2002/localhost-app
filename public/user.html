@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>早押しクイズ | ユーザー</title>
+    <style>
+      :root { --bg:#0b1020; --fg:#e7ebf0; --muted:#9aa4b2; --accent:#3aa675; --danger:#d9534f; }
+      * { box-sizing: border-box; }
+      body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.4 system-ui, -apple-system, sans-serif; }
+      header { padding: 12px 16px; border-bottom: 1px solid #1b2440; display:flex; gap:12px; align-items:center; justify-content:space-between; }
+      main { display:grid; place-items:center; padding:20px; min-height: calc(100vh - 54px); }
+      .card { width:100%; max-width:520px; background:#0e1630; border:1px solid #1b2440; border-radius:10px; padding:20px; display:grid; gap:12px; }
+      input, button { font: inherit; }
+      input[type=text] { width:100%; padding: 10px 12px; border-radius: 8px; border:1px solid #2f405f; background:#0b1020; color: var(--fg); }
+      .big { padding: 16px; font-size: 24px; border-radius: 12px; }
+      .buzz { background: var(--accent); color:#04110b; font-weight:800; border:1px solid #2f405f; cursor: pointer; }
+      .buzz[disabled] { opacity: .6; cursor: not-allowed; }
+      .status { color: var(--muted); }
+      a { color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>早押しクイズ | ユーザー <span id="state" class="status">closed</span></div>
+      <a href="/">トップ</a>
+    </header>
+    <main>
+      <div class="card">
+        <label>
+          名前（必須）
+          <input id="name" type="text" maxlength="24" placeholder="例: たろう" />
+        </label>
+        <button id="buzz" class="buzz big" disabled>早押し！</button>
+        <div id="msg" class="status">受付がOpenになるまでお待ちください。</div>
+      </div>
+    </main>
+    <script>
+      const stateEl = document.getElementById('state');
+      const buzzBtn = document.getElementById('buzz');
+      const nameInput = document.getElementById('name');
+      const msgEl = document.getElementById('msg');
+
+      // keep name in localStorage
+      nameInput.value = localStorage.getItem('quiz_name') || '';
+      nameInput.addEventListener('change', () => localStorage.setItem('quiz_name', nameInput.value));
+
+      let isOpen = false;
+      let pressed = false;
+
+      function setState(open, first) {
+        isOpen = !!open;
+        stateEl.textContent = isOpen ? 'open' : 'closed';
+        if (!isOpen) {
+          buzzBtn.disabled = true;
+          pressed = false; // allow next round
+        } else {
+          buzzBtn.disabled = pressed || !nameInput.value.trim();
+        }
+        if (first) {
+          msgEl.textContent = `最初: ${first.name} (${new Date(first.ts).toLocaleTimeString()})`;
+        } else {
+          msgEl.textContent = isOpen ? '今すぐ「早押し！」で参加' : '受付がOpenになるまでお待ちください。';
+        }
+      }
+
+      nameInput.addEventListener('input', () => {
+        if (isOpen && !pressed) buzzBtn.disabled = !nameInput.value.trim();
+      });
+
+      const es = new EventSource('/events');
+      es.addEventListener('quiz_state', ev => {
+        try {
+          const s = JSON.parse(ev.data);
+          setState(s.isOpen, s.first);
+        } catch {}
+      });
+
+      buzzBtn.onclick = async () => {
+        const name = nameInput.value.trim();
+        if (!name) { alert('名前を入力してください'); return; }
+        try {
+          const res = await fetch('/quiz/buzz', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name })});
+          const data = await res.json().catch(()=>({}));
+          if (res.ok && data.ok) {
+            pressed = true;
+            buzzBtn.disabled = true;
+            msgEl.textContent = '送信しました！結果をお待ちください。';
+          } else if (data.reason === 'closed') {
+            msgEl.textContent = '受付は閉じています。';
+          } else if (data.reason === 'duplicate') {
+            msgEl.textContent = '既に押しています。';
+          } else {
+            msgEl.textContent = '送信に失敗しました。';
+          }
+        } catch {
+          msgEl.textContent = '送信に失敗しました（ネットワーク）。';
+        }
+      };
+    </script>
+  </body>
+  </html>
+
