@@ -2,19 +2,30 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+// Note: keep zero dependencies for offline environments
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const HOST = '0.0.0.0'; // listen on all interfaces for LAN access
+const STATIC_DIR = (function(){
+  const dist = path.join(__dirname, 'web', 'dist');
+  try { if (fs.existsSync(dist)) return dist; } catch {}
+  return path.join(__dirname, 'public');
+})();
 
 // Track connected SSE clients
 const clients = new Set();
 
 // Quiz state (in-memory)
 const quiz = {
+  mode: 'buzzer', // 'buzzer' | 'choice'
   isOpen: false,
+  // buzzer
   first: null, // { name, ts }
   order: [], // [{ name, ts }]
   pressedBy: new Set(),
+  // choice
+  question: null, // { text, options: [4], correct: 0-3|null }
+  answers: new Map(), // name -> { choice, ts }
 };
 
 function getLocalIPs() {
@@ -46,7 +57,7 @@ function handleSSE(req, res) {
   res.write(': connected\n\n');
   sendEvent(res, 'hello', { ts: Date.now() });
   // Push current quiz state on connect
-  sendEvent(res, 'quiz_state', { isOpen: quiz.isOpen, first: quiz.first, order: quiz.order });
+  sendEvent(res, 'quiz_state', publicQuizState());
 
   // Keep alive pings
   const ping = setInterval(() => {
@@ -79,7 +90,7 @@ function broadcastChat(payload) {
 function broadcastQuizState() {
   for (const { res } of clients) {
     try {
-      sendEvent(res, 'quiz_state', { isOpen: quiz.isOpen, first: quiz.first, order: quiz.order });
+      sendEvent(res, 'quiz_state', publicQuizState());
     } catch (_) {}
   }
 }
@@ -115,9 +126,9 @@ function readJson(req) {
 
 function serveStatic(req, res) {
   const urlPath = new URL(req.url, `http://${req.headers.host}`).pathname;
-  let filePath = path.join(__dirname, 'public', urlPath === '/' ? 'index.html' : urlPath);
+  let filePath = path.join(STATIC_DIR, urlPath === '/' ? 'index.html' : urlPath);
   // Prevent path traversal
-  if (!filePath.startsWith(path.join(__dirname, 'public'))) {
+  if (!filePath.startsWith(STATIC_DIR)) {
     res.writeHead(400);
     return res.end('Bad request');
   }
@@ -195,11 +206,40 @@ const server = http.createServer(async (req, res) => {
   }
 
   // Quiz endpoints
+  if (url.pathname === '/quiz/config' && method === 'POST') {
+    // Configure multiple-choice question
+    try {
+      const data = await readJson(req);
+      const text = String(data.text || '').trim().slice(0, 200);
+      const options = Array.isArray(data.options)
+        ? data.options.map((s) => String(s || '').trim().slice(0, 100))
+        : [];
+      const correct = [0, 1, 2, 3].includes(data.correct) ? data.correct : null;
+      if (!text || options.length !== 4 || options.some((s) => !s)) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        return res.end(JSON.stringify({ ok: false, error: 'invalid_config' }));
+      }
+      quiz.mode = 'choice';
+      quiz.question = { text, options, correct };
+      quiz.answers = new Map();
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: true }));
+      broadcastQuizState();
+      return;
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ ok: false, error: 'invalid_json' }));
+    }
+  }
   if (url.pathname === '/quiz/open' && method === 'POST') {
     quiz.isOpen = true;
-    quiz.first = null;
-    quiz.order = [];
-    quiz.pressedBy = new Set();
+    if (quiz.mode === 'buzzer') {
+      quiz.first = null;
+      quiz.order = [];
+      quiz.pressedBy = new Set();
+    } else {
+      quiz.answers = new Map();
+    }
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({ ok: true }));
     broadcastQuizState();
@@ -210,10 +250,42 @@ const server = http.createServer(async (req, res) => {
     quiz.first = null;
     quiz.order = [];
     quiz.pressedBy = new Set();
+    quiz.answers = new Map();
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({ ok: true }));
     broadcastQuizState();
     return;
+  }
+  if (url.pathname === '/quiz/answer' && method === 'POST') {
+    try {
+      const data = await readJson(req);
+      const name = String((data.name || '')).trim().slice(0, 24) || 'anon';
+      const choice = Number(data.choice);
+      if (quiz.mode !== 'choice' || !quiz.question) {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        return res.end(JSON.stringify({ ok: false, reason: 'not_choice' }));
+      }
+      if (!quiz.isOpen) {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        return res.end(JSON.stringify({ ok: false, reason: 'closed' }));
+      }
+      if (!(choice >= 0 && choice < 4)) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        return res.end(JSON.stringify({ ok: false, reason: 'invalid_choice' }));
+      }
+      if (quiz.answers.has(name)) {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        return res.end(JSON.stringify({ ok: false, reason: 'duplicate' }));
+      }
+      quiz.answers.set(name, { choice, ts: Date.now() });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ ok: true }));
+      broadcastQuizState();
+      return;
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ ok: false, reason: 'invalid_json' }));
+    }
   }
   if (url.pathname === '/quiz/buzz' && method === 'POST') {
     readJson(req).then((data) => {
@@ -229,9 +301,13 @@ const server = http.createServer(async (req, res) => {
       const entry = { name, ts: Date.now() };
       quiz.pressedBy.add(name);
       quiz.order.push(entry);
-      if (!quiz.first) quiz.first = entry;
-      // lock on first
-      quiz.isOpen = false;
+      if (!quiz.first) {
+        quiz.first = entry;
+        if (quiz.mode === 'buzzer') {
+          // lock on first only for buzzer mode
+          quiz.isOpen = false;
+        }
+      }
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ ok: true }));
       broadcastBuzz(entry);
@@ -256,3 +332,18 @@ server.listen(PORT, HOST, () => {
   const list = ips.map((ip) => `  http://${ip}:${PORT}`).join('\n');
   console.log(`LAN chat listening on:\n${list || '  http://127.0.0.1:' + PORT}`);
 });
+
+function publicQuizState() {
+  const counts = [0, 0, 0, 0];
+  for (const v of quiz.answers.values()) {
+    if (v && v.choice >= 0 && v.choice < 4) counts[v.choice] += 1;
+  }
+  return {
+    mode: quiz.mode,
+    isOpen: quiz.isOpen,
+    first: quiz.first,
+    order: quiz.order,
+    question: quiz.question,
+    counts,
+  };
+}
